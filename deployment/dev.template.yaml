@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: app-attestation-api (dev/uat deployment)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: uat
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+
+Resources:
+  AppAttestationApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: app/
+      Handler: main.handler
+      Environment:
+        Variables:
+          ENV: uat
+          CONFIG_NAME: Uat/AppAttestationApi/Config
+          REGION_NAME: ap-southeast-1
+          ENABLE_STR_LOG_MODE: 'true'
+          ENABLE_JSON_LOG_MODE: 'false'
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: '2773'

@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  app-attestation-api - Android Play Integrity & iOS App Attestation backend
+
+Parameters:
+  Environment:
+    Type: String
+    Default: uat
+    AllowedValues:
+      - uat
+      - production
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    Environment:
+      Variables:
+        ENV: !Ref Environment
+        REGION_NAME: ap-southeast-1
+        ENABLE_STR_LOG_MODE: 'true'
+        ENABLE_JSON_LOG_MODE: 'false'
+
+Resources:
+
+  # API Gateway
+  AppAttestationApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      EndpointConfiguration: REGIONAL
+      Auth:
+        ApiKeyRequired: true
+
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: 50
+          ThrottlingBurstLimit: 20
+
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'OPTIONS,GET,POST'"
+        AllowHeaders: "'Content-Type,X-Api-Key'"
+        AllowCredentials: false
+
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+
+  # Function Role
+  AppAttestationApiFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+        - PolicyName: CloudWatchLogsPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+
+        - PolicyName: SecretsManagerPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+
+  # Lambda Function
+  AppAttestationApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: app/
+      Handler: main.handler
+      Role: !GetAtt AppAttestationApiFunctionRole.Arn
+
+      Events:
+        ApiRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AppAttestationApi
+            Path: /
+            Method: ANY
+
+        ApiGatewayProxy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AppAttestationApi
+            Path: /{proxy+}
+            Method: ANY
+
+      Environment:
+        Variables:
+          CONFIG_NAME: !Sub "${Environment}/AppAttestationApi/Config"
+          PARAMETERS_SECRETS_EXTENSION_LOG_LEVEL: info
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: 2773
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${AppAttestationApi}.execute-api.ap-southeast-1.amazonaws.com/${Environment}/"

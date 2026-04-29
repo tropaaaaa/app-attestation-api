@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  app-attestation-api (local) - SAM local testing with x-api-key enforcement
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 60
+    Environment:
+      Variables:
+        ENV: local
+        DEBUG_MODE: 'true'
+        ALLOWED_HOST: '*'
+        REGION_NAME: ap-southeast-1
+        ENABLE_STR_LOG_MODE: 'true'
+        ENABLE_JSON_LOG_MODE: 'false'
+        LOCAL_X_API_KEY: "dev-local-key-123"
+
+Resources:
+
+  # Local-only authorizer (enforces x-api-key)
+  AppAttestationLocalAuthorizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: app/
+      Handler: authorizer.handler
+      Environment:
+        Variables:
+          LOCAL_X_API_KEY: "dev-local-key-123"
+
+  # API Gateway (local)
+  AppAttestationApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: local
+      EndpointConfiguration: REGIONAL
+      Auth:
+        DefaultAuthorizer: LocalApiKeyAuthorizer
+        Authorizers:
+          LocalApiKeyAuthorizer:
+            FunctionArn: !GetAtt AppAttestationLocalAuthorizer.Arn
+            FunctionPayloadType: REQUEST
+            Identity:
+              Headers:
+                - x-api-key
+
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: 20
+          ThrottlingBurstLimit: 10
+
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'OPTIONS,GET,POST,PUT,PATCH,DELETE'"
+        AllowHeaders: "'*'"
+        AllowCredentials: false
+
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+            gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT,PATCH,DELETE'"
+            gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+            gatewayresponse.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT,PATCH,DELETE'"
+            gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+
+  # Function Role
+  AppAttestationApiFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+        - PolicyName: CloudWatchLogsPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+
+        - PolicyName: SecretsManagerAndSSM
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParameterHistory
+                Resource: "*"
+
+  # Lambda Function (local)
+  AppAttestationApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: app/
+      Handler: main.handler
+      Role: !GetAtt AppAttestationApiFunctionRole.Arn
+
+      Events:
+        ApiRoot:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AppAttestationApi
+            Path: /
+            Method: ANY
+
+        ApiGatewayProxy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AppAttestationApi
+            Path: /{proxy+}
+            Method: ANY
+
+      Environment:
+        Variables:
+          CONFIG_NAME: Local/AppAttestationApi/Config
+          PARAMETERS_SECRETS_EXTENSION_LOG_LEVEL: info
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: 2773
+          X_API_KEY: "dev-local-key-123"
+          ANDROID_PACKAGE_NAME: com.example.myapp
+          IOS_BUNDLE_ID: com.example.myapp
+          # Set GOOGLE_SERVICE_ACCOUNT_JSON in your .env for local dev
+
+Outputs:
+  LocalApiUrl:
+    Description: Local API URL (when using sam local start-api)
+    Value: "http://127.0.0.1:3000/"
